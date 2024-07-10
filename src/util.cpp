@@ -32,6 +32,9 @@
 #define STBI_ONLY_JPEG
 #include "stb_image.h"
 
+#define DDSKTX_IMPLEMENT
+#include "dds-ktx.h"
+
 namespace
 {
 std::string data_dir;
@@ -109,7 +112,8 @@ Util::Image::Image(Image&& other)
     : data{other.data},
       size{other.size},
       width{other.width},
-      height{other.height}
+      height{other.height},
+      pixel_format{other.pixel_format}
 {
     other.data = nullptr;
 }
@@ -122,6 +126,7 @@ Util::Image& Util::Image::operator=(Image&& other)
     size = other.size;
     width = other.width;
     height = other.height;
+    pixel_format = other.pixel_format;
 
     other.data = nullptr;
 
@@ -131,6 +136,15 @@ Util::Image& Util::Image::operator=(Image&& other)
 Util::Image Util::read_image_file(std::string const& rel_path)
 {
     auto const path = get_data_file_path(rel_path);
+
+    if (rel_path.length() > 4 &&
+        rel_path[rel_path.length()-4] == '.' &&
+        rel_path[rel_path.length()-3] == 'k' &&
+        rel_path[rel_path.length()-2] == 't' &&
+        rel_path[rel_path.length()-1] == 'x')
+    {
+        return read_ktx_file(rel_path);
+    }
 
     int w = 0;
     int h = 0;
@@ -148,6 +162,59 @@ Util::Image Util::read_image_file(std::string const& rel_path)
     image.width = static_cast<size_t>(w);
     image.height = static_cast<size_t>(h);
     image.size = image.width * image.height * 4;
+    image.pixel_format = vk::Format::eR8G8B8A8Srgb;
+
+    return image;
+}
+
+static
+vk::Format get_vk_format(ddsktx_format format, int flags, int bpp)
+{
+    switch(format) {
+        case DDSKTX_FORMAT_BC1:
+        {
+            if (!(flags & DDSKTX_TEXTURE_FLAG_SRGB) &&
+                bpp == 4)
+                return vk::Format::eBc1RgbUnormBlock;
+        }
+        case DDSKTX_FORMAT_ASTC4x4:
+            if (flags & DDSKTX_TEXTURE_FLAG_SRGB)
+                return vk::Format::eAstc4x4SrgbBlock;
+            else
+                return vk::Format::eAstc4x4UnormBlock;
+        default:
+            throw std::runtime_error {
+                "Unsupported ktx format: " + std::string(ddsktx_format_str(format)) + " " + std::to_string(flags) + " " + std::to_string(bpp)};
+    }
+}
+
+Util::Image Util::read_ktx_file(std::string const& rel_path)
+{
+    auto const path = get_data_file_path(rel_path);
+    auto ktx_data = Util::read_data_file(rel_path);
+
+    ddsktx_texture_info tc = {0};
+    if (!ddsktx_parse(&tc, ktx_data.data(), ktx_data.size(), NULL))
+    {
+        throw std::runtime_error {
+            "Failed to parse ktx file " + path};
+    }
+    ddsktx_sub_data sub_data;
+    ddsktx_get_sub(&tc, &sub_data, ktx_data.data(), ktx_data.size(), 0, 0, 0);
+
+    Image image;
+    image.data = (unsigned char*)STBI_MALLOC(sub_data.size_bytes);
+
+    if (!image.data)
+    {
+        throw std::runtime_error {
+            "Failed to allocate ktx image buffer " + path};
+    }
+    memcpy(image.data, sub_data.buff, sub_data.size_bytes);
+    image.width = static_cast<size_t>(sub_data.width);
+    image.height = static_cast<size_t>(sub_data.height);
+    image.size = static_cast<size_t>(sub_data.size_bytes);
+    image.pixel_format = get_vk_format(tc.format, tc.flags, tc.bpp);
 
     return image;
 }

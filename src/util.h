@@ -27,6 +27,8 @@
 #include <sstream>
 #include <cstdint>
 
+#include <vulkan/vulkan.hpp>
+
 namespace Util
 {
 
@@ -49,9 +51,11 @@ struct Image
     size_t size;
     size_t width;
     size_t height;
+    vk::Format pixel_format;
 };
 
 Image read_image_file(std::string const& rel_path);
+Image read_ktx_file(std::string const& rel_path);
 
 template<typename T>
 T from_string(std::string const& str)

@@ -38,7 +38,7 @@ void texture_setup_image(VulkanState& vulkan,
                          vkutil::Texture& texture,
                          Util::Image const& image)
 {
-    auto const texture_format = vk::Format::eR8G8B8A8Srgb;
+    auto const texture_format = image.pixel_format;
     vk::DeviceMemory staging_buffer_memory;
 
     auto const image_extent = vk::Extent2D{
@@ -143,11 +143,19 @@ vkutil::TextureBuilder& vkutil::TextureBuilder::set_anisotropy(float a)
     return *this;
 }
 
+static
+void query_texture_support(const Util::Image &image)
+{
+
+}
+
 vkutil::Texture vkutil::TextureBuilder::build()
 {
     Texture texture;
 
-    auto const image = Util::read_image_file(file);
+    const Util::Image image = Util::read_image_file(file);
+
+    query_texture_support(image);
 
     texture_setup_image(vulkan, texture, image);
     texture_setup_sampler(vulkan, texture, filter, anisotropy);

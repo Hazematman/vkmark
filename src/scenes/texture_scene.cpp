@@ -50,6 +50,9 @@ TextureScene::TextureScene() : Scene{"texture"}
     options_["texture-filter"] = SceneOption("texture-filter", "linear",
                                              "The texture filter to use",
                                              "nearest,linear");
+    options_["texture-format"] = SceneOption("texture-format", "rgba",
+                                             "The texture format to use",
+                                             "rgba,bc1,astc4x4");
     options_["anisotropy"] = SceneOption("anisotropy", "16",
                                          "The max anisotropy bound to use (use 0 to disable it)");
 }
@@ -64,7 +67,7 @@ void TextureScene::setup(
 
     vulkan = &vulkan_;
     extent = vulkan_images[0].extent;
-    format = vulkan_images[0].format;
+    rt_format = vulkan_images[0].format;
     depth_format = vk::Format::eD32Sfloat;
     aspect = static_cast<float>(extent.height) / extent.width;
 
@@ -201,6 +204,7 @@ void TextureScene::setup_uniform_buffer()
 void TextureScene::setup_texture()
 {
     auto const& filter = options_["texture-filter"].value;
+    auto const& tex_format = options_["texture-format"].value;
     auto const anisotropy = std::stof(options_["anisotropy"].value);
     vk::Filter vk_filter = vk::Filter::eLinear;
 
@@ -209,8 +213,15 @@ void TextureScene::setup_texture()
     else if (filter == "linear")
         vk_filter = vk::Filter::eLinear;
 
-    texture = vkutil::TextureBuilder{*vulkan}
-        .set_file("textures/crate-base.jpg")
+    auto builder = vkutil::TextureBuilder{*vulkan};
+    if (tex_format == "bc1")
+        builder.set_file("textures/crate-base-bc1.ktx");
+    else if (tex_format == "astc4x4")
+        builder.set_file("textures/crate-base-astc4x4.ktx");
+    else if (tex_format == "rgba")
+        builder.set_file("textures/crate-base.jpg");
+
+    texture = builder
         .set_filter(vk_filter)
         .set_anisotropy(anisotropy)
         .build();
@@ -233,7 +244,7 @@ void TextureScene::setup_shader_descriptor_set()
 void TextureScene::setup_render_pass()
 {
     render_pass = vkutil::RenderPassBuilder(*vulkan)
-        .set_color_format(format)
+        .set_color_format(rt_format)
         .set_depth_format(depth_format)
         .set_color_load_op(vk::AttachmentLoadOp::eClear)
         .build();

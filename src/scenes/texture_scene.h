@@ -60,7 +60,7 @@ private:
 
     VulkanState* vulkan;
     vk::Extent2D extent;
-    vk::Format format;
+    vk::Format rt_format;
     vk::Format depth_format;
     float aspect;
     glm::mat4 projection;
