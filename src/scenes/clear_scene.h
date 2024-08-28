@@ -40,10 +40,22 @@ public:
 
 private:
     void prepare_command_buffer(VulkanImage const& image);
+    void setup_renderpass();
+    void setup_framebuffers(std::vector<VulkanImage> const& vulkan_images);
+
+    enum {
+        CLEAR_CMD,
+        CLEAR_LOADOP,
+    } mode;
 
     VulkanState* vulkan;
+    vk::Extent2D extent;
+    vk::Format format;
+    ManagedResource<vk::RenderPass> render_pass;
     std::vector<vk::CommandBuffer> command_buffers;
     ManagedResource<vk::Semaphore> submit_semaphore;
+    std::vector<ManagedResource<vk::ImageView>> image_views;
+    std::vector<ManagedResource<vk::Framebuffer>> framebuffers;
     vk::ClearColorValue clear_color;
     bool cycle;
 };

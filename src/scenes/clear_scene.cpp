@@ -33,6 +33,40 @@ ClearScene::ClearScene() : Scene{"clear"}, cycle{true}
 {
     options_["color"] = SceneOption("color", "cycle",
                                     "The normalized (0.0-1.0) \"r,g,b,a\" color to use or \"cycle\" to cycle");
+    options_["clear-mode"] = SceneOption("clear-mode", "cmd",
+                                         "The operation to perform the clear by",
+                                         "cmd,loadop");
+}
+
+void ClearScene::setup_renderpass()
+{
+    render_pass = vkutil::RenderPassBuilder(*vulkan)
+        .set_color_format(format)
+        .set_color_load_op(vk::AttachmentLoadOp::eClear)
+        .build();
+}
+
+void ClearScene::setup_framebuffers(std::vector<VulkanImage> const& vulkan_images)
+{
+    for (auto const& vulkan_image : vulkan_images)
+    {
+        image_views.push_back(
+            vkutil::ImageViewBuilder{*vulkan}
+                .set_image(vulkan_image.image)
+                .set_format(vulkan_image.format)
+                .set_aspect_mask(vk::ImageAspectFlagBits::eColor)
+                .build());
+    }
+
+    for (auto const& image_view : image_views)
+    {
+        framebuffers.push_back(
+            vkutil::FramebufferBuilder{*vulkan}
+                .set_render_pass(render_pass)
+                .set_image_views({image_view})
+                .set_extent(extent)
+                .build());
+    }
 }
 
 void ClearScene::setup(VulkanState& vulkan_, std::vector<VulkanImage> const& images)
@@ -40,6 +74,8 @@ void ClearScene::setup(VulkanState& vulkan_, std::vector<VulkanImage> const& ima
     Scene::setup(vulkan_, images);
 
     vulkan = &vulkan_;
+    extent = images[0].extent;
+    format = images[0].format;
 
     auto const command_buffer_allocate_info = vk::CommandBufferAllocateInfo{}
         .setCommandPool(vulkan->command_pool())
@@ -69,6 +105,20 @@ void ClearScene::setup(VulkanState& vulkan_, std::vector<VulkanImage> const& ima
 
         clear_color = vk::ClearColorValue{color_value};
     }
+
+    auto const& clear_op = options_["clear-mode"].value;
+
+    if (clear_op == "cmd")
+        mode = CLEAR_CMD;
+    else if (clear_op == "loadop")
+        mode = CLEAR_LOADOP;
+    else
+        throw std::runtime_error("Invalid \"clear-mode\" option");
+
+    if (mode == CLEAR_LOADOP) {
+        setup_framebuffers(images);
+        setup_renderpass();
+    }
 }
 
 void ClearScene::teardown()
@@ -78,6 +128,9 @@ void ClearScene::teardown()
     submit_semaphore = {};
 
     vulkan->device().freeCommandBuffers(vulkan->command_pool(), command_buffers);
+    framebuffers.clear();
+    image_views.clear();
+    render_pass = {};
 
     Scene::teardown();
 }
@@ -87,54 +140,67 @@ void ClearScene::prepare_command_buffer(VulkanImage const& image)
     auto const begin_info = vk::CommandBufferBeginInfo{}
         .setFlags(vk::CommandBufferUsageFlagBits::eSimultaneousUse);
 
-    auto const image_range = vk::ImageSubresourceRange{}
-        .setAspectMask(vk::ImageAspectFlagBits::eColor)
-        .setBaseMipLevel(0)
-        .setLevelCount(1)
-        .setBaseArrayLayer(0)
-        .setLayerCount(1);
-
-    auto const undef_to_transfer_barrier = vk::ImageMemoryBarrier{}
-        .setImage(image.image)
-        .setOldLayout(vk::ImageLayout::eUndefined)
-        .setNewLayout(vk::ImageLayout::eTransferDstOptimal)
-        .setSrcAccessMask({})
-        .setDstAccessMask(vk::AccessFlagBits::eTransferWrite)
-        .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-        .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-        .setSubresourceRange(image_range);
-
-    auto const transfer_to_present_barrier = vk::ImageMemoryBarrier{}
-        .setImage(image.image)
-        .setOldLayout(vk::ImageLayout::eTransferDstOptimal)
-        .setNewLayout(vk::ImageLayout::ePresentSrcKHR)
-        .setSrcAccessMask(vk::AccessFlagBits::eTransferWrite)
-        .setDstAccessMask({})
-        .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-        .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-        .setSubresourceRange(image_range);
-
     auto const i = image.index;
 
     command_buffers[i].begin(begin_info);
 
-    command_buffers[i].pipelineBarrier(
-        vk::PipelineStageFlagBits::eTransfer,
-        vk::PipelineStageFlagBits::eTransfer,
-        {}, {}, {},
-        undef_to_transfer_barrier);
+    if (mode == CLEAR_CMD) {
+        auto const image_range = vk::ImageSubresourceRange{}
+            .setAspectMask(vk::ImageAspectFlagBits::eColor)
+            .setBaseMipLevel(0)
+            .setLevelCount(1)
+            .setBaseArrayLayer(0)
+            .setLayerCount(1);
 
-    command_buffers[i].clearColorImage(
-        image.image,
-        vk::ImageLayout::eTransferDstOptimal,
-        clear_color,
-        image_range);
+        auto const undef_to_transfer_barrier = vk::ImageMemoryBarrier{}
+            .setImage(image.image)
+            .setOldLayout(vk::ImageLayout::eUndefined)
+            .setNewLayout(vk::ImageLayout::eTransferDstOptimal)
+            .setSrcAccessMask({})
+            .setDstAccessMask(vk::AccessFlagBits::eTransferWrite)
+            .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+            .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+            .setSubresourceRange(image_range);
 
-    command_buffers[i].pipelineBarrier(
-        vk::PipelineStageFlagBits::eTransfer,
-        vk::PipelineStageFlagBits::eBottomOfPipe,
-        {}, {}, {},
-        transfer_to_present_barrier);
+        auto const transfer_to_present_barrier = vk::ImageMemoryBarrier{}
+            .setImage(image.image)
+            .setOldLayout(vk::ImageLayout::eTransferDstOptimal)
+            .setNewLayout(vk::ImageLayout::ePresentSrcKHR)
+            .setSrcAccessMask(vk::AccessFlagBits::eTransferWrite)
+            .setDstAccessMask({})
+            .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+            .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+            .setSubresourceRange(image_range);
+
+        command_buffers[i].pipelineBarrier(
+            vk::PipelineStageFlagBits::eTransfer,
+            vk::PipelineStageFlagBits::eTransfer,
+            {}, {}, {},
+            undef_to_transfer_barrier);
+
+        command_buffers[i].clearColorImage(
+            image.image,
+            vk::ImageLayout::eTransferDstOptimal,
+            clear_color,
+            image_range);
+
+        command_buffers[i].pipelineBarrier(
+            vk::PipelineStageFlagBits::eTransfer,
+            vk::PipelineStageFlagBits::eBottomOfPipe,
+            {}, {}, {},
+            transfer_to_present_barrier);
+    } else if(mode == CLEAR_LOADOP) {
+        std::array<vk::ClearValue, 1> clear_values{clear_color};
+        auto const render_pass_begin_info = vk::RenderPassBeginInfo{}
+            .setRenderPass(render_pass)
+            .setFramebuffer(framebuffers[i])
+            .setRenderArea({{0,0}, extent})
+            .setClearValueCount(clear_values.size())
+            .setPClearValues(clear_values.data());
+
+        command_buffers[i].beginRenderPass(render_pass_begin_info, vk::SubpassContents::eInline);
+        command_buffers[i].endRenderPass();
+    }
 
     command_buffers[i].end();
 }
