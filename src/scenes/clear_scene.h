@@ -40,6 +40,7 @@ public:
 
 private:
     void prepare_command_buffer(VulkanImage const& image);
+    void setup_rts();
     void setup_renderpass();
     void setup_framebuffers(std::vector<VulkanImage> const& vulkan_images);
 
@@ -54,8 +55,11 @@ private:
     ManagedResource<vk::RenderPass> render_pass;
     std::vector<vk::CommandBuffer> command_buffers;
     ManagedResource<vk::Semaphore> submit_semaphore;
-    std::vector<ManagedResource<vk::ImageView>> image_views;
+    std::vector<std::vector<ManagedResource<vk::ImageView>>> image_views;
     std::vector<ManagedResource<vk::Framebuffer>> framebuffers;
+
+    std::vector<ManagedResource<vk::Image>> rt_images;
     vk::ClearColorValue clear_color;
     bool cycle;
+    int num_rts;
 };

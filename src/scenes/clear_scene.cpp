@@ -36,34 +36,73 @@ ClearScene::ClearScene() : Scene{"clear"}, cycle{true}
     options_["clear-mode"] = SceneOption("clear-mode", "cmd",
                                          "The operation to perform the clear by",
                                          "cmd,loadop");
+    options_["num-rts"] =  SceneOption("num-rts", "1",
+                                       "The number of render targets");
+}
+
+void ClearScene::setup_rts()
+{
+    for (int i = 0; i < num_rts - 1; i++)
+    {
+        rt_images.push_back(
+            vkutil::ImageBuilder{*vulkan}
+                .set_extent(extent)
+                .set_format(format)
+                .set_tiling(vk::ImageTiling::eOptimal)
+                .set_usage(vk::ImageUsageFlagBits::eColorAttachment)
+                .set_memory_properties(vk::MemoryPropertyFlagBits::eDeviceLocal)
+                .set_initial_layout(vk::ImageLayout::ePreinitialized)
+                .build());
+    }
 }
 
 void ClearScene::setup_renderpass()
 {
-    render_pass = vkutil::RenderPassBuilder(*vulkan)
-        .set_color_format(format)
-        .set_color_load_op(vk::AttachmentLoadOp::eClear)
-        .build();
+    auto render_pass_builder = vkutil::RenderPassBuilder(*vulkan);
+    for (int i = 0; i < num_rts; i++)
+    {
+        render_pass_builder.set_color_format(format)
+            .set_color_load_op(vk::AttachmentLoadOp::eClear);
+    }
+
+    render_pass = render_pass_builder.build();
 }
 
 void ClearScene::setup_framebuffers(std::vector<VulkanImage> const& vulkan_images)
 {
     for (auto const& vulkan_image : vulkan_images)
     {
-        image_views.push_back(
+        std::vector<ManagedResource<vk::ImageView>> image_view;
+        image_view.push_back(
             vkutil::ImageViewBuilder{*vulkan}
                 .set_image(vulkan_image.image)
                 .set_format(vulkan_image.format)
                 .set_aspect_mask(vk::ImageAspectFlagBits::eColor)
                 .build());
+
+        for (int i = 0; i < num_rts - 1; i++)
+        {
+            image_view.push_back(
+                vkutil::ImageViewBuilder{*vulkan}
+                    .set_image(rt_images[i])
+                    .set_format(format)
+                    .set_aspect_mask(vk::ImageAspectFlagBits::eColor)
+                    .build());
+        }
+
+        image_views.push_back(std::move(image_view));
     }
 
-    for (auto const& image_view : image_views)
+    for (auto& image_view : image_views)
     {
+        std::vector<vk::ImageView> views;
+        for (auto& imgv : image_view)
+            views.push_back(imgv);
+
         framebuffers.push_back(
             vkutil::FramebufferBuilder{*vulkan}
                 .set_render_pass(render_pass)
-                .set_image_views({image_view})
+                .set_image_views(views)
                 .set_extent(extent)
                 .build());
     }
@@ -115,9 +154,15 @@ void ClearScene::setup(VulkanState& vulkan_, std::vector<VulkanImage> const& ima
     else
         throw std::runtime_error("Invalid \"clear-mode\" option");
 
+    num_rts = std::stoi(options_["num-rts"].value);
+
+    if (mode == CLEAR_CMD && num_rts > 1)
+        throw std::runtime_error("More than one render target only works with \"clear-mode=loadop\"");
+
     if (mode == CLEAR_LOADOP) {
-        setup_framebuffers(images);
+        setup_rts();
         setup_renderpass();
+        setup_framebuffers(images);
     }
 }
 
@@ -131,6 +176,7 @@ void ClearScene::teardown()
     framebuffers.clear();
     image_views.clear();
     render_pass = {};
+    rt_images.clear();
 
     Scene::teardown();
 }
@@ -190,7 +236,11 @@ void ClearScene::prepare_command_buffer(VulkanImage const& image)
             {}, {}, {},
             transfer_to_present_barrier);
     } else if(mode == CLEAR_LOADOP) {
-        std::array<vk::ClearValue, 1> clear_values{clear_color};
+        std::vector<vk::ClearValue> clear_values;
+
+        for (int i = 0; i < num_rts; i++)
+            clear_values.push_back(clear_color);
+
         auto const render_pass_begin_info = vk::RenderPassBeginInfo{}
             .setRenderPass(render_pass)
             .setFramebuffer(framebuffers[i])
