@@ -26,15 +26,13 @@
 
 vkutil::RenderPassBuilder::RenderPassBuilder(VulkanState& vulkan)
     : vulkan{vulkan},
-      color_format{vk::Format::eUndefined},
-      depth_format{vk::Format::eUndefined},
-      color_load_op{vk::AttachmentLoadOp::eLoad}
+      depth_format{vk::Format::eUndefined}
 {
 }
 
 vkutil::RenderPassBuilder& vkutil::RenderPassBuilder::set_color_format(vk::Format format_)
 {
-    color_format = format_;
+    color_formats.push_back(format_);
     return *this;
 }
 
@@ -46,25 +44,33 @@ vkutil::RenderPassBuilder& vkutil::RenderPassBuilder::set_depth_format(vk::Forma
 
 vkutil::RenderPassBuilder& vkutil::RenderPassBuilder::set_color_load_op(vk::AttachmentLoadOp load_op_)
 {
-    color_load_op = load_op_;
+    color_load_ops.push_back(load_op_);
     return *this;
 }
 
 ManagedResource<vk::RenderPass> vkutil::RenderPassBuilder::build()
 {
-    auto const color_attachment = vk::AttachmentDescription{}
-        .setFormat(color_format)
-        .setSamples(vk::SampleCountFlagBits::e1)
-        .setLoadOp(color_load_op)
-        .setStoreOp(vk::AttachmentStoreOp::eStore)
-        .setStencilLoadOp(vk::AttachmentLoadOp::eDontCare)
-        .setStencilStoreOp(vk::AttachmentStoreOp::eDontCare)
-        .setInitialLayout(vk::ImageLayout::eUndefined)
-        .setFinalLayout(vk::ImageLayout::ePresentSrcKHR);
+    size_t attachment_index = 0;
+    std::vector<vk::AttachmentDescription> attachments;
+    std::vector<vk::AttachmentReference> attachment_references;
+    for (auto color_format : color_formats)
+    {
+        attachments.push_back(
+            vk::AttachmentDescription{}
+                .setFormat(color_format)
+                .setSamples(vk::SampleCountFlagBits::e1)
+                .setLoadOp(color_load_ops[attachment_index])
+                .setStoreOp(vk::AttachmentStoreOp::eStore)
+                .setStencilLoadOp(vk::AttachmentLoadOp::eDontCare)
+                .setStencilStoreOp(vk::AttachmentStoreOp::eDontCare)
+                .setInitialLayout(vk::ImageLayout::eUndefined)
+                .setFinalLayout(vk::ImageLayout::ePresentSrcKHR));
 
-    auto const color_attachment_ref = vk::AttachmentReference{}
-        .setAttachment(0)
-        .setLayout(vk::ImageLayout::eColorAttachmentOptimal);
+        attachment_references.push_back(
+            vk::AttachmentReference{}
+                .setAttachment(attachment_index++)
+                .setLayout(vk::ImageLayout::eColorAttachmentOptimal));
+    }
 
     auto const depth_attachment = vk::AttachmentDescription{}
         .setFormat(depth_format)
@@ -77,18 +83,17 @@ ManagedResource<vk::RenderPass> vkutil::RenderPassBuilder::build()
         .setFinalLayout(vk::ImageLayout::eDepthStencilAttachmentOptimal);
 
     auto const depth_attachment_ref = vk::AttachmentReference{}
-        .setAttachment(1)
+        .setAttachment(attachment_index)
         .setLayout(vk::ImageLayout::eDepthStencilAttachmentOptimal);
 
     bool const use_depth_attachment = depth_format != vk::Format::eUndefined;
 
     auto const subpass = vk::SubpassDescription{}
         .setPipelineBindPoint(vk::PipelineBindPoint::eGraphics)
-        .setColorAttachmentCount(1)
-        .setPColorAttachments(&color_attachment_ref)
+        .setColorAttachmentCount(attachment_index)
+        .setPColorAttachments(attachment_references.data())
         .setPDepthStencilAttachment(use_depth_attachment ? &depth_attachment_ref : nullptr);
 
-    std::vector<vk::AttachmentDescription> attachments{color_attachment};
     if (use_depth_attachment)
         attachments.push_back(depth_attachment);
 

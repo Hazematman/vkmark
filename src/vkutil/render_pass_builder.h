@@ -45,9 +45,9 @@ public:
 
 private:
     VulkanState& vulkan;
-    vk::Format color_format;
+    std::vector<vk::Format> color_formats;
     vk::Format depth_format;
-    vk::AttachmentLoadOp color_load_op;
+    std::vector<vk::AttachmentLoadOp> color_load_ops;
 };
 
 }
