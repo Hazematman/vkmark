@@ -128,7 +128,7 @@ void ClearScene::prepare_command_buffer(VulkanImage const& image)
         image.image,
         vk::ImageLayout::eTransferDstOptimal,
         clear_color,
-        image_range);                
+        image_range);
 
     command_buffers[i].pipelineBarrier(
         vk::PipelineStageFlagBits::eTransfer,
