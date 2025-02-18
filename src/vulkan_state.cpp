@@ -179,6 +179,12 @@ void VulkanState::create_instance(VulkanWSI& vulkan_wsi)
         }
     }
 
+    // TODO add cmd flag to enable device memory reporting
+    if (true)
+    {
+        enabled_extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+    }
+
     auto const create_info = vk::InstanceCreateInfo{}
         .setPApplicationInfo(&app_info)
         .setEnabledLayerCount(validation_layers.size())
@@ -233,6 +239,22 @@ static std::pair<uint32_t, bool> find_queue_family_index(vk::PhysicalDevice pd, 
     return std::make_pair(0, false);
 }
 
+void dmr_callback(const VkDeviceMemoryReportCallbackDataEXT *pCallbackData,
+                  void *pUserData)
+{
+#define set_str(x) event_type_map[(x)] = #x
+    const char *event_type_map[VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATION_FAILED_EXT + 1];
+        set_str(VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATE_EXT);
+        set_str(VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_FREE_EXT);
+        set_str(VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_IMPORT_EXT);
+        set_str(VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_UNIMPORT_EXT);
+        set_str(VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATION_FAILED_EXT);
+
+    Log::info("Device memory report of type %s on obj %lu %lu of size %lu with handle %lu at heap %u\n",
+              event_type_map[pCallbackData->type], pCallbackData->memoryObjectId, pCallbackData->objectType,
+              pCallbackData->size, pCallbackData->objectHandle, pCallbackData->heapIndex);
+}
+
 void VulkanState::create_logical_device(VulkanWSI& vulkan_wsi)
 {
     // it would be really nice to support c++17
@@ -272,17 +294,39 @@ void VulkanState::create_logical_device(VulkanWSI& vulkan_wsi)
     Log::debug("VulkanState: Using queue family index %d for rendering\n",
                graphics_queue_family_index());
 
-    std::vector<char const*> enabled_extensions{vulkan_wsi.required_extensions().device};
+    std::vector<char const*> enabled_extensions = {
+        vulkan_wsi.required_extensions().device,
+    };
+
+    // TODO replace this with flag to enable device memory reports
+    if (true)
+    {
+        enabled_extensions.push_back(VK_EXT_DEVICE_MEMORY_REPORT_EXTENSION_NAME);
+    }
 
     auto const device_features = vk::PhysicalDeviceFeatures{}
         .setSamplerAnisotropy(true);
 
-    auto const device_create_info = vk::DeviceCreateInfo{}
+    auto device_memory_report_create_info = vk::DeviceDeviceMemoryReportCreateInfoEXT{}
+        .setPUserData(this)
+        .setPfnUserCallback(dmr_callback);
+
+    auto const device_memory_report_features = vk::PhysicalDeviceDeviceMemoryReportFeaturesEXT{}
+        .setDeviceMemoryReport(true)
+        .setPNext(&device_memory_report_create_info);
+
+    auto device_create_info = vk::DeviceCreateInfo{}
         .setQueueCreateInfoCount(queue_create_infos.size())
         .setPQueueCreateInfos(queue_create_infos.data())
         .setEnabledExtensionCount(enabled_extensions.size())
         .setPpEnabledExtensionNames(enabled_extensions.data())
         .setPEnabledFeatures(&device_features);
+
+    // TODO replace this with flag to enable device memory reports
+    if (true)
+    {
+        device_create_info.setPNext(&device_memory_report_features);
+    }
 
     vk_device = ManagedResource<vk::Device>{
         physical_device().createDevice(device_create_info),
